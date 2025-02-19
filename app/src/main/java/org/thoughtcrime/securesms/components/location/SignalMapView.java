@@ -5,17 +5,18 @@ import android.graphics.Bitmap;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewTreeObserver;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 
-import com.google.android.gms.maps.CameraUpdateFactory;
-import com.google.android.gms.maps.GoogleMap;
-import com.google.android.gms.maps.MapView;
+import com.bardurt.omvlib.map.core.GeoPosition;
+import com.bardurt.omvlib.map.core.OmvMap;
+import com.bardurt.omvlib.map.core.OmvMapView;
+import com.bardurt.omvlib.map.core.OmvMarker;
 import com.google.android.gms.maps.model.LatLng;
-import com.google.android.gms.maps.model.MarkerOptions;
 
 import org.signal.core.util.concurrent.ListenableFuture;
 import org.signal.core.util.concurrent.SettableFuture;
@@ -25,7 +26,7 @@ import java.util.concurrent.ExecutionException;
 
 public class SignalMapView extends LinearLayout {
 
-  private MapView   mapView;
+  private OmvMapView   mapView;
   private ImageView imageView;
   private TextView  textView;
 
@@ -54,10 +55,12 @@ public class SignalMapView extends LinearLayout {
 
   public ListenableFuture<Bitmap> display(final SignalPlace place) {
     final SettableFuture<Bitmap> future = new SettableFuture<>();
-
+    this.mapView.setVisibility(View.VISIBLE);
+    this.mapView.getMap().show();
     this.imageView.setVisibility(View.GONE);
     this.textView.setText(place.getDescription());
-    snapshot(place, mapView).addListener(new ListenableFuture.Listener<Bitmap>() {
+
+    mapView.getViewTreeObserver().addOnGlobalLayoutListener(() -> snapshot(place, mapView).addListener(new ListenableFuture.Listener<>() {
       @Override
       public void onSuccess(Bitmap result) {
         future.set(result);
@@ -69,37 +72,27 @@ public class SignalMapView extends LinearLayout {
       public void onFailure(ExecutionException e) {
         future.setException(e);
       }
-    });
+    }));
 
     return future;
   }
 
-  public static ListenableFuture<Bitmap> snapshot(final LatLng place, @NonNull final MapView mapView) {
+  public static ListenableFuture<Bitmap> snapshot(final LatLng place, @NonNull final OmvMapView omvMapView) {
     final SettableFuture<Bitmap> future = new SettableFuture<>();
-    mapView.onCreate(null);
-    mapView.onStart();
-    mapView.onResume();
 
-    mapView.setVisibility(View.VISIBLE);
-
-    mapView.getMapAsync(googleMap -> {
-      googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(place, 13));
-      googleMap.addMarker(new MarkerOptions().position(place));
-      googleMap.setBuildingsEnabled(true);
-      googleMap.setMapType(GoogleMap.MAP_TYPE_NORMAL);
-      googleMap.getUiSettings().setAllGesturesEnabled(false);
-      googleMap.setOnMapLoadedCallback(() -> googleMap.snapshot(bitmap -> {
-        future.set(bitmap);
-        mapView.setVisibility(View.GONE);
-        mapView.onPause();
-        mapView.onStop();
-        mapView.onDestroy();
-      }));
+    omvMapView.getMap().getMapAsync(() -> {
+      omvMapView.getMap().moveCamera(
+          new GeoPosition(place.latitude, place.longitude), 13);
+      omvMapView.getMap().setBuildingsEnabled(true);
+      omvMapView.getMap().setMapType(OmvMap.MapType.NORMAL);
+      omvMapView.getMap().addMarker(new OmvMarker(new GeoPosition(place.latitude, place.longitude)));
+      omvMapView.getMap().snapShot(future::set);
     });
 
     return future;
   }
-  public static ListenableFuture<Bitmap> snapshot(final SignalPlace place, @NonNull final MapView mapView) {
+
+  public static ListenableFuture<Bitmap> snapshot(final SignalPlace place, @NonNull final OmvMapView mapView) {
     return snapshot(place.getLatLong(), mapView);
   }
 

@@ -533,7 +533,6 @@ dependencies {
     exclude(group = "com.google.firebase", module = "firebase-analytics")
     exclude(group = "com.google.firebase", module = "firebase-measurement-connector")
   }
-  implementation(libs.google.play.services.maps)
   implementation(libs.google.play.services.auth)
   implementation(libs.bundles.media3)
   implementation(libs.conscrypt.android)
@@ -577,6 +576,7 @@ dependencies {
   implementation(libs.rxjava3.rxandroid)
   implementation(libs.rxjava3.rxkotlin)
   implementation(libs.rxdogtag)
+  implementation("com.github.bardurt:OpenMapView:v0.1.1")
 
   "playImplementation"(project(":billing"))
   "nightlyImplementation"(project(":billing"))

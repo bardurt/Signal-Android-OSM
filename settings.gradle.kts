@@ -21,6 +21,7 @@ dependencyResolutionManagement {
     maven {
       url = uri("https://dl.cloudsmith.io/qxAgwaeEE1vN8aLU/mobilecoin/mobilecoin/maven/")
     }
+    maven { url = uri("https://jitpack.io") }
   }
   versionCatalogs {
     // libs.versions.toml is automatically registered.
