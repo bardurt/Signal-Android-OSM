@@ -576,7 +576,7 @@ dependencies {
   implementation(libs.rxjava3.rxandroid)
   implementation(libs.rxjava3.rxkotlin)
   implementation(libs.rxdogtag)
-  implementation("com.github.bardurt:OpenMapView:v0.1.1")
+  implementation("com.github.bardurt:OpenMapView:0.1.9")
 
   "playImplementation"(project(":billing"))
   "nightlyImplementation"(project(":billing"))

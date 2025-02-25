@@ -5,12 +5,10 @@ import android.annotation.SuppressLint;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
-import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.location.Address;
 import android.location.Geocoder;
 import android.net.Uri;
-import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -28,6 +26,7 @@ import androidx.fragment.app.Fragment;
 import com.bardurt.omvlib.map.core.GeoPosition;
 import com.bardurt.omvlib.map.core.OmvMap;
 import com.bardurt.omvlib.map.core.OmvMapView;
+import com.bardurt.omvlib.map.core.OmvMarker;
 import com.google.android.gms.maps.model.LatLng;
 
 import org.signal.core.util.logging.Log;
@@ -37,10 +36,13 @@ import org.thoughtcrime.securesms.util.BitmapUtil;
 import org.thoughtcrime.securesms.util.DynamicNoActionBarTheme;
 import org.thoughtcrime.securesms.util.DynamicTheme;
 import org.thoughtcrime.securesms.util.MediaUtil;
+import org.thoughtcrime.securesms.util.views.SimpleProgressDialog;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Allows selection of an address from a google map.
@@ -66,8 +68,10 @@ public final class PlacePickerActivity extends AppCompatActivity {
   private Address                  currentAddress;
   private LatLng                   initialLocation;
   private LatLng                   currentLocation = new LatLng(0, 0);
-  private AddressLookup            addressLookup;
   private OmvMapView               omvMapView;
+  private OmvMap                   omvMap;
+  private Handler                  handler         = new Handler(Looper.getMainLooper());
+  private ExecutorService          executor        = Executors.newSingleThreadExecutor();
 
   public static void startActivityForResultAtCurrentLocation(@NonNull Fragment fragment, int requestCode, @ColorInt int chatColor) {
     fragment.startActivityForResult(new Intent(fragment.requireActivity(), PlacePickerActivity.class).putExtra(KEY_CHAT_COLOR, chatColor), requestCode);
@@ -112,16 +116,16 @@ public final class PlacePickerActivity extends AppCompatActivity {
       throw new AssertionError("No map fragment");
     }
 
-    omvMapView.getMap().getMapAsync(() -> {
-
+    omvMapView.getMapAsync(omvMap -> {
+      this.omvMap = omvMap;
       if (isLocationPermissionEnabled()) {
-        omvMapView.getMap().setMyLocationEnabled(true);
+        omvMap.setMyLocationEnabled(true);
       }
 
-      omvMapView.getMap().setMyLocationEnabled(isLocationPermissionEnabled());
-      omvMapView.getMap().showLayerOptions(false);
+      omvMap.setMyLocationEnabled(isLocationPermissionEnabled());
+      omvMap.showLayerOptions(false);
 
-      omvMapView.getMap().setOnCameraMoveStartedListener(() -> {
+      omvMap.setOnCameraMoveStartedListener(() -> {
         markerImage.animate()
                    .translationY(-75f)
                    .setInterpolator(OVERSHOOT_INTERPOLATOR)
@@ -131,7 +135,7 @@ public final class PlacePickerActivity extends AppCompatActivity {
         bottomSheet.hide();
       });
 
-      omvMapView.getMap().setOnCameraIdleListener(() -> {
+      omvMap.setOnCameraIdleListener(() -> {
         markerImage.animate()
                    .translationY(0f)
                    .setInterpolator(OVERSHOOT_INTERPOLATOR)
@@ -175,37 +179,21 @@ public final class PlacePickerActivity extends AppCompatActivity {
     Intent      returnIntent = new Intent();
     String      address      = currentAddress != null && currentAddress.getAddressLine(0) != null ? currentAddress.getAddressLine(0) : "";
     AddressData addressData  = new AddressData(currentLocation.latitude, currentLocation.longitude, address);
+    omvMap.addMarker(new OmvMarker(omvMap.getCenter(), "", null));
+    SimpleProgressDialog.DismissibleDialog dismissibleDialog = SimpleProgressDialog.showDelayed(this, 10, 10);
 
-    bottomSheet.hide();
-    Thread t = new Thread(){
-      @Override public void run() {
-        super.run();
-        try {
-          Thread.sleep(1000);
-        } catch (InterruptedException e) {
-          throw new RuntimeException(e);
-        }
-
-        Handler h = new Handler(Looper.getMainLooper());
-
-        h.post(() -> omvMapView.getMap().snapShot(new OmvMap.SnapshotReadyCallback() {
-          @Override public void onSnapshotReady(@NonNull Bitmap bitmap) {
-            byte[] blob = BitmapUtil.toByteArray(bitmap);
-            Uri uri = BlobProvider.getInstance()
-                                  .forData(blob)
-                                  .withMimeType(MediaUtil.IMAGE_JPEG)
-                                  .createForSingleSessionInMemory();
-            returnIntent.putExtra(ADDRESS_INTENT, addressData);
-            returnIntent.setData(uri);
-            setResult(RESULT_OK, returnIntent);
-            finish();
-          }
-        }));
-      }
-    };
-
-    t.start();
-
+    omvMapView.getMap().snapShot(bitmap -> {
+      byte[] blob = BitmapUtil.toByteArray(bitmap);
+      Uri uri = BlobProvider.getInstance()
+                            .forData(blob)
+                            .withMimeType(MediaUtil.IMAGE_JPEG)
+                            .createForSingleSessionInMemory();
+      returnIntent.putExtra(ADDRESS_INTENT, addressData);
+      returnIntent.setData(uri);
+      dismissibleDialog.dismiss();
+      setResult(RESULT_OK, returnIntent);
+      finish();
+    });
   }
 
   private boolean isLocationPermissionEnabled() {
@@ -213,53 +201,83 @@ public final class PlacePickerActivity extends AppCompatActivity {
   }
 
   private void lookupAddress(@Nullable LatLng target) {
-    if (addressLookup != null) {
-      addressLookup.cancel(true);
+    if (target == null) {
+      return;
     }
-    addressLookup = new AddressLookup();
-    addressLookup.execute(target);
+    executor.execute(new AddressLookupThread(
+        new Geocoder(this, Locale.getDefault()),
+        target.latitude,
+        target.longitude,
+        this::updateAddress,
+        handler
+
+    ));
   }
 
   @Override
-  protected void onPause() {
-    super.onPause();
-    if (addressLookup != null) {
-      addressLookup.cancel(true);
+  protected void onDestroy() {
+    super.onDestroy();
+    if (omvMap != null) {
+      omvMap.destroy();
+    }
+
+    executor.shutdown();
+  }
+
+  public void updateAddress(Address address) {
+    currentAddress = address;
+    if (address != null) {
+      bottomSheet.showResult(address.getLatitude(), address.getLongitude(), addressToShortString(address), addressToString(address));
+    } else {
+      bottomSheet.hide();
     }
   }
 
-  @SuppressLint("StaticFieldLeak")
-  private class AddressLookup extends AsyncTask<LatLng, Void, Address> {
-
-    private final String   TAG = Log.tag(AddressLookup.class);
+  public static class AddressLookupThread implements Runnable {
+    private final String   TAG = Log.tag(AddressLookupThread.class);
     private final Geocoder geocoder;
+    private final double   latitude;
+    private final double   longitude;
+    private final Listener listener;
+    private final Handler  mainThread;
 
-    AddressLookup() {
-      geocoder = new Geocoder(getApplicationContext(), Locale.getDefault());
+    public AddressLookupThread(Geocoder geocoder,
+                               double latitude,
+                               double longitude,
+                               Listener listener,
+                               Handler mainThread
+    )
+    {
+      this.geocoder   = geocoder;
+      this.latitude   = latitude;
+      this.longitude  = longitude;
+      this.listener   = listener;
+      this.mainThread = mainThread;
+
     }
 
-    @Override
-    protected Address doInBackground(LatLng... latLngs) {
-      if (latLngs.length == 0) return null;
-      LatLng latLng = latLngs[0];
-      if (latLng == null) return null;
+    @Override public void run() {
+
+      LatLng        latLng      = new LatLng(latitude, longitude);
+      List<Address> addressList = null;
+
       try {
-        List<Address> result = geocoder.getFromLocation(latLng.latitude, latLng.longitude, 1);
-        return !result.isEmpty() ? result.get(0) : null;
+        addressList = geocoder.getFromLocation(latLng.latitude, latLng.longitude, 1);
       } catch (IOException e) {
         Log.w(TAG, "Failed to get address from location", e);
-        return null;
+      }
+
+      if (addressList != null) {
+        if (!addressList.isEmpty()) {
+          final Address address = addressList.get(0);
+          mainThread.post(() -> listener.onAddressReady(address));
+        }
       }
     }
 
-    @Override
-    protected void onPostExecute(@Nullable Address address) {
-      currentAddress = address;
-      if (address != null) {
-        bottomSheet.showResult(address.getLatitude(), address.getLongitude(), addressToShortString(address), addressToString(address));
-      } else {
-        bottomSheet.hide();
-      }
+
+    public interface Listener {
+      void onAddressReady(Address address);
     }
   }
 
@@ -279,4 +297,6 @@ public final class PlacePickerActivity extends AppCompatActivity {
       return split[1].trim();
     } else return split[0].trim();
   }
+
+
 }

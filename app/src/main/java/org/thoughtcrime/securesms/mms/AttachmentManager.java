@@ -239,10 +239,9 @@ public class AttachmentManager {
   {
     inflateStub();
 
-    mapView.display(place);
-
     attachmentViewStub.get().setVisibility(View.VISIBLE);
     removableMediaView.display(mapView, false);
+    mapView.display(place);
     LocationSlide locationSlide = new LocationSlide(context, thumbnailUri, BlobProvider.getFileSize(thumbnailUri), place);
     setSlide(locationSlide);
     attachmentListener.onAttachmentChanged();
